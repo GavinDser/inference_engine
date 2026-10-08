@@ -4,9 +4,11 @@ mod features;
 
 
 use data::load_prices;
-use std::error::Error;
+use std::{error::Error, println};
 
 use features::{simple_returns, log_returns, sma_sliding, sma_naive};
+
+use crate::features::{rolling_std_two_pass, rolling_std_welford};
 
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -36,7 +38,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     .map(|(a,b)| (a-b).abs())
     .fold(0.0_f64, f64::max);
 
-    println!("{:e}, ok = {}", diff, diff < 1e-9);
+    println!("{:e}, ok = {}\n", diff, diff < 1e-9);
+
+
+    let vol_tp = rolling_std_welford(&returns, 20);
+
+
+    println!("{:.6?}\nlength:{}" ,&vol_tp[0..3],vol_tp.len());
+
     Ok(())
 
 }
