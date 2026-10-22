@@ -117,6 +117,52 @@ pub fn rolling_std_welford(xs: &[f64], w: usize) -> Vec<f64> {
     vol
 }
 
+/// Lag feature: item t is `xs[t - k]`, the value k steps in the past.
+/// Output always has `xs.len()` items, so index t still means day t.
+/// The first k items are `None` (no history yet); `k >= len` gives all `None`.
+/// Only looks backwards (t - k <= t), so there is no look-ahead leakage.
+pub fn lag(xs: &[f64], k: usize) -> Vec<Option<f64>> {
+    // guard first: otherwise i - k below could underflow usize
+    if k >= xs.len() {
+        return vec![None; xs.len()];
+    }
+
+    let mut lag = Vec::<Option<f64>>::with_capacity(xs.len());
+
+    for i in 0..(xs.len()) {
+        // not enough history before day i
+        if i < k {
+            lag.push(None);
+        }
+        // day i sees the value from k days earlier
+        else {
+            lag.push(Some(xs[i-k]))
+        }
+    }
+
+
+    lag
+}
+
+/// Lag features lag_1 ..= lag_max_k, one column per k.
+/// Column j holds `lag(xs, j + 1)`; `max_k == 0` gives no columns.
+pub fn lags(xs: &[f64], max_k: usize) -> Vec<Vec<Option<f64>>> {
+    // ..= includes max_k itself
+    (1..=max_k).map(|k| lag(xs,k)).collect()
+    
+
+}
+
+
+
+
+
+
+
+
+
+
+
 
 
 #[cfg(test)]
@@ -225,5 +271,93 @@ mod tests {
             assert_close(got[2], 0.013820002180840, 1e-9);
             assert_close(got[731], 0.006162521727874, 1e-9);
         }
+    }
+
+    // compare a lag column with expected values; None must match None, Some within tol
+    fn assert_lag_eq(got: &[Option<f64>], expected: &[Option<f64>]) {
+        assert_eq!(got.len(), expected.len());
+        for (t, (g, e)) in got.iter().zip(expected.iter()).enumerate() {
+            match (g, e) {
+                (None, None) => {}
+                (Some(g), Some(e)) => assert_close(*g, *e, 1e-12),
+                _ => panic!("t={t}: got {g:?}, expected {e:?}"),
+            }
+        }
+    }
+
+    // lag case 1: hand-computed [10,20,30,40] with k=1 and k=2 (table in notes §1.3)
+    #[test]
+    fn lag_hand_computed() {
+        let xs = [10.0, 20.0, 30.0, 40.0];
+        assert_lag_eq(&lag(&xs, 1), &[None, Some(10.0), Some(20.0), Some(30.0)]);
+        assert_lag_eq(&lag(&xs, 2), &[None, None, Some(10.0), Some(20.0)]);
+    }
+
+    // lag case 2: output length always equals input length, so index t stays day t
+    #[test]
+    fn lag_keeps_length() {
+        let xs = [1.0, 2.0, 3.0, 4.0, 5.0];
+        for k in 0..=xs.len() + 2 {
+            assert_eq!(lag(&xs, k).len(), xs.len(), "k={k}");
+        }
+    }
+
+    // lag case 3: k=0 copies input; k >= len is all None without panicking; empty in -> empty out
+    #[test]
+    fn lag_edge_cases() {
+        let xs = [1.0, 2.0, 3.0];
+        assert_lag_eq(&lag(&xs, 0), &[Some(1.0), Some(2.0), Some(3.0)]);
+        for k in [3, 4, 100] {
+            assert!(lag(&xs, k).iter().all(|v| v.is_none()), "k={k}");
+        }
+        assert!(lag(&[], 0).is_empty());
+        assert!(lag(&[], 2).is_empty());
+        assert!(lags(&xs, 0).is_empty());
+    }
+
+    // lag case 4: leakage check; the first k items are None and every Some(v) equals xs[t - k] (past only)
+    #[test]
+    fn lag_no_lookahead() {
+        let xs: Vec<f64> = (0..10).map(|i| i as f64 * 1.5 - 3.0).collect();
+        for k in 0..xs.len() {
+            for (t, v) in lag(&xs, k).iter().enumerate() {
+                match v {
+                    None => assert!(t < k, "unexpected None at t={t}, k={k}"),
+                    Some(v) => {
+                        assert!(t >= k, "Some before enough history at t={t}, k={k}");
+                        assert_close(*v, xs[t - k], 1e-12);
+                    }
+                }
+            }
+        }
+    }
+
+    // lags case 5: max_k columns, column j equals lag(xs, j + 1) (off-by-one check)
+    #[test]
+    fn lags_columns() {
+        let xs = [10.0, 20.0, 30.0, 40.0, 50.0];
+        let cols = lags(&xs, 3);
+        assert_eq!(cols.len(), 3);
+        for (j, col) in cols.iter().enumerate() {
+            assert_lag_eq(col, &lag(&xs, j + 1));
+        }
+    }
+
+    // lag case 6: acceptance values on real log returns (precomputed in Python), tol 1e-9
+    #[test]
+    fn lag_real_data_values() {
+        let rets = real_log_returns();
+        let cols = lags(&rets, 5);
+        for col in &cols {
+            assert_eq!(col.len(), 751);
+        }
+        let (lag1, lag3, lag5) = (&cols[0], &cols[2], &cols[4]);
+
+        assert!(lag1[0].is_none());
+        assert_close(lag1[1].unwrap(), 0.010261407151, 1e-9);
+        assert!(lag3[2].is_none());
+        assert_close(lag3[3].unwrap(), 0.010261407151, 1e-9);
+        assert_close(lag1[750].unwrap(), -0.002487045084, 1e-9);
+        assert_close(lag5[750].unwrap(), 0.005116620611, 1e-9);
     }
 }

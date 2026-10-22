@@ -8,7 +8,7 @@ use std::{error::Error, println};
 
 use features::{simple_returns, log_returns, sma_sliding, sma_naive};
 
-use crate::features::{rolling_std_two_pass, rolling_std_welford};
+use crate::features::{lag, lags, rolling_std_two_pass, rolling_std_welford};
 
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -45,6 +45,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 
     println!("{:.6?}\nlength:{}" ,&vol_tp[0..3],vol_tp.len());
+
+
+    let lags = lags(&[10.0, 20.0 ,30.0 ,40.0], 2);
+
+    println!("\nlag:{:?}", lags);
 
     Ok(())
 
